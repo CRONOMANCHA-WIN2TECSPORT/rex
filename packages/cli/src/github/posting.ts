@@ -39,14 +39,14 @@ export async function postReview(args: PostReviewArgs): Promise<void> {
       return c;
     });
 
-  if (comments.length === 0) {
-    await args.octokit.issues.createComment({
-      owner: args.owner,
-      repo: args.repo,
-      issue_number: args.prNumber,
-      body,
-    });
-    return;
+  const hasSevereIssues = args.submission.findings.some(
+    (f) => f.severity === "critical" || f.severity === "high"
+  );
+  let event: "REQUEST_CHANGES" | "APPROVE" | "COMMENT" = "COMMENT";
+  if (hasSevereIssues) {
+    event = "REQUEST_CHANGES";
+  } else if (args.submission.findings.length === 0) {
+    event = "APPROVE";
   }
 
   try {
@@ -55,9 +55,9 @@ export async function postReview(args: PostReviewArgs): Promise<void> {
       repo: args.repo,
       pull_number: args.prNumber,
       commit_id: args.headSha || undefined,
-      event: "COMMENT",
+      event,
       body,
-      comments,
+      comments: comments.length > 0 ? comments : undefined,
     });
   } catch (err) {
     // Fallback: createReview rejects when lines are outside the diff hunks.
