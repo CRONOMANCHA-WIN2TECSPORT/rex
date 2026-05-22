@@ -1,0 +1,19 @@
+# Docker Compose configuration for Rex Server
+# Deploying to production VPS using a reverse proxy (e.g., Caddy or Nginx)
+
+services:
+  rex-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: rex-server
+    restart: unless-stopped
+    ports:
+      # Bind to localhost (127.0.0.1) since reverse proxy will terminate TLS and route traffic.
+      # Change to "3000:3000" if exposing directly to the internet (not recommended without TLS).
+      - "127.0.0.1:3000:3000"
+    env_file:
+      - /etc/rex/server.env
+    volumes:
+      - /etc/rex/app.pem:/etc/rex/app.pem:ro
+      - /etc/rex/rex.config.yml:/etc/rex/rex.config.yml:ro

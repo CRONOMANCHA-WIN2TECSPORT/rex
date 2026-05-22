@@ -154,6 +154,15 @@ chmod 600 /etc/rex/server.env
 
 ### 2.5 Run (option A — Docker)
 
+**Using Docker Compose (recommended for easier updates and management):**
+
+```bash
+cd /opt/rex
+docker compose up -d
+```
+
+**Using plain Docker:**
+
 ```bash
 cd /opt/rex
 docker build -t rex-server -f packages/server/Dockerfile .
