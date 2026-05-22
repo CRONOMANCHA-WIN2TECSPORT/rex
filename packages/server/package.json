@@ -1,0 +1,23 @@
+{
+  "name": "@rex/server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "start": "tsx src/index.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.13.7",
+    "@octokit/auth-app": "^8.2.0",
+    "@octokit/rest": "^22.0.1",
+    "@octokit/webhooks": "^14.2.0",
+    "@rex/shared": "workspace:*",
+    "hono": "^4.6.14",
+    "jose": "^5.9.6",
+    "yaml": "^2.6.1",
+    "zod": "^3.23.8"
+  }
+}

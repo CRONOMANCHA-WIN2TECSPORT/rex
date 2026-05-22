@@ -1,0 +1,173 @@
+name: "Rex"
+description: "Self-hosted PR review agent (review + fix) talking to a rex server."
+branding:
+  icon: "git-pull-request"
+  color: "purple"
+
+inputs:
+  model:
+    description: "Model in provider/model format (e.g. anthropic/claude-sonnet-4-5, openai/gpt-5, deepseek/deepseek-chat, google/gemini-2-5-pro, moonshot/kimi-k2)."
+    required: true
+  mentions:
+    description: "Comma-separated trigger phrases."
+    required: false
+    default: "/review,/fix"
+  permissions:
+    description: "Required actor permission: admin | write | any | CODEOWNERS. Default per command."
+    required: false
+    default: ""
+  token_permissions:
+    description: "Installation token scope: NO_PUSH | WRITE | JSON. Default per command."
+    required: false
+    default: ""
+  rex_server_url:
+    description: "URL of the rex server (e.g. https://rex.example.com)."
+    required: true
+  oidc_audience:
+    description: "OIDC audience (must match rex.config.yml > oidc.audience)."
+    required: false
+    default: "rex"
+  rex_ref:
+    description: "Git ref of the rex repo to use for the CLI."
+    required: false
+    default: "main"
+  rex_repository:
+    description: "GitHub repo containing rex (for self-hosted forks)."
+    required: false
+    default: "rex-org/rex"
+  forks:
+    description: "If 'true', silently skip fork PRs. If 'false', run normally."
+    required: false
+    default: "true"
+  allowed_users:
+    description: "Optional comma-separated list of GitHub logins allowed to invoke this Action. Stacks with VPS allowlist."
+    required: false
+    default: ""
+
+runs:
+  using: "composite"
+  steps:
+    - name: Check mentions
+      id: mentions
+      shell: bash
+      env:
+        EVENT_NAME: ${{ github.event_name }}
+        COMMENT_BODY: ${{ github.event.comment.body }}
+        REVIEW_BODY: ${{ github.event.review.body }}
+        MENTIONS: ${{ inputs.mentions }}
+      run: |
+        BODY=""
+        case "$EVENT_NAME" in
+          issue_comment|pull_request_review_comment) BODY="$COMMENT_BODY";;
+          pull_request_review)                       BODY="$REVIEW_BODY";;
+          *) echo "skip=true" >> "$GITHUB_OUTPUT"; exit 0;;
+        esac
+
+        IFS=',' read -ra ARR <<< "$MENTIONS"
+        for m in "${ARR[@]}"; do
+          m="$(echo "$m" | sed -e 's/^ *//' -e 's/ *$//')"
+          if [[ "$BODY" == *"$m"* ]]; then
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+        done
+        echo "skip=true" >> "$GITHUB_OUTPUT"
+
+    - name: Setup pnpm
+      if: success() && steps.mentions.outputs.skip != 'true'
+      uses: pnpm/action-setup@v4
+      with:
+        version: 9.15.0
+
+    - name: Setup Node
+      if: success() && steps.mentions.outputs.skip != 'true'
+      uses: actions/setup-node@v4
+      with:
+        node-version: "22"
+        cache: pnpm
+
+    - name: Checkout rex
+      if: success() && steps.mentions.outputs.skip != 'true'
+      uses: actions/checkout@v4
+      with:
+        repository: ${{ inputs.rex_repository }}
+        ref: ${{ inputs.rex_ref }}
+        path: _rex
+
+    - name: Install rex deps
+      if: success() && steps.mentions.outputs.skip != 'true'
+      shell: bash
+      working-directory: _rex
+      run: pnpm install --frozen-lockfile=false
+
+    - name: Preflight orchestration
+      if: success() && steps.mentions.outputs.skip != 'true'
+      id: preflight
+      shell: bash
+      working-directory: _rex
+      env:
+        EVENT_NAME: ${{ github.event_name }}
+        COMMENT_BODY: ${{ github.event.comment.body }}
+        REVIEW_BODY: ${{ github.event.review.body }}
+        MENTIONS: ${{ inputs.mentions }}
+        REQUIRED_PERMISSION: ${{ inputs.permissions }}
+        TOKEN_PERMISSIONS_INPUT: ${{ inputs.token_permissions }}
+        ALLOWED_USERS: ${{ inputs.allowed_users }}
+        REX_SERVER_URL: ${{ inputs.rex_server_url }}
+        OIDC_AUDIENCE: ${{ inputs.oidc_audience }}
+        FORKS: ${{ inputs.forks }}
+        ACTION_TOKEN: ${{ github.token }}
+        ACTOR: ${{ github.event.comment.user.login || github.event.review.user.login || github.actor }}
+        REPOSITORY: ${{ github.repository }}
+        PR_NUMBER: ${{ github.event.issue.pull_request.url && github.event.issue.number || github.event.pull_request.number }}
+        IS_FORK: ${{ github.event.pull_request.head.repo.fork || (github.event.issue.pull_request && github.event.pull_request.head.repo.full_name != github.event.pull_request.base.repo.full_name) }}
+        WORKSPACE_DIR: ${{ github.workspace }}
+      run: pnpm exec tsx packages/action/script/orchestrate.ts
+
+    - name: Configure Git for App token
+      if: success() && steps.mentions.outputs.skip != 'true' && steps.preflight.outputs.skip != 'true'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ env.REX_APP_TOKEN }}
+      run: |
+        git config --global user.name "rex[bot]"
+        git config --global user.email "rex[bot]@users.noreply.github.com"
+        if [ -n "${GH_TOKEN}" ]; then
+          server="${GITHUB_SERVER_URL:-https://github.com}"
+          host="${server#https://}"
+          host="${host#http://}"
+          # Replace any token persisted by actions/checkout so pushes trigger CI.
+          git config --global --unset-all "http.${server}/.extraheader" 2>/dev/null || true
+          (cd "$GITHUB_WORKSPACE" && git remote set-url origin "https://x-access-token:${GH_TOKEN}@${host}/${GITHUB_REPOSITORY}.git") || true
+        fi
+
+    - name: Run rex-cli
+      if: success() && steps.mentions.outputs.skip != 'true' && steps.preflight.outputs.skip != 'true'
+      id: cli
+      shell: bash
+      working-directory: _rex
+      env:
+        REX_COMMAND: ${{ env.REX_COMMAND }}
+        REX_MODEL: ${{ inputs.model }}
+        REX_APP_TOKEN: ${{ env.REX_APP_TOKEN }}
+        REX_REPO_DIR: ${{ github.workspace }}
+        REX_REPOSITORY: ${{ github.repository }}
+        REX_PR_NUMBER: ${{ env.REX_PR_NUMBER }}
+        REX_COMMENT_ID: ${{ github.event.comment.id }}
+        REX_PROMPT: ${{ env.REX_PROMPT }}
+        REX_HEAD_SHA: ${{ env.REX_HEAD_SHA }}
+        # API keys pass through from the caller workflow's env
+      run: pnpm --filter @rex/cli start
+
+    - name: Finalize
+      if: always() && steps.mentions.outputs.skip != 'true' && steps.preflight.outputs.skip != 'true'
+      shell: bash
+      working-directory: _rex
+      env:
+        REX_APP_TOKEN: ${{ env.REX_APP_TOKEN }}
+        REX_REPOSITORY: ${{ github.repository }}
+        REX_PR_NUMBER: ${{ env.REX_PR_NUMBER }}
+        CLI_OUTCOME: ${{ steps.cli.outcome }}
+        GITHUB_RUN_ID: ${{ github.run_id }}
+        GITHUB_SERVER_URL: ${{ github.server_url }}
+      run: pnpm exec tsx packages/action/script/finalize.ts

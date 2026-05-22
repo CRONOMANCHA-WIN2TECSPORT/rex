@@ -1,0 +1,27 @@
+# Rex server config. Copy to rex.config.yml (gitignored) and fill in.
+
+github_app:
+  app_id: 123456                            # numeric ID of your GitHub App
+  # Choose ONE of these:
+  private_key_path: /etc/rex/app.pem        # PEM file on disk, OR
+  # private_key_env: GITHUB_APP_PRIVATE_KEY # env var with the PEM contents
+  webhook_secret_env: REX_WEBHOOK_SECRET
+
+# Two-layer allowlist. Empty list = unrestricted; any non-empty list activates that gate.
+allowlist:
+  orgs:
+    - fjimenez
+  repos:
+    - fjimenez/proyecto-x
+  users:
+    - fjimenez
+
+defaults:
+  max_steps: 30
+  max_tokens_per_call: 8000
+  timeout_minutes: 30
+
+oidc:
+  audience: rex   # must match `oidc_audience` input on the Action
+
+port: 3000

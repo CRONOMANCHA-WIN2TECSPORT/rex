@@ -1,0 +1,23 @@
+{
+  "name": "@rex/cli",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "rex-cli": "src/index.ts"
+  },
+  "scripts": {
+    "start": "tsx src/index.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@ai-sdk/anthropic": "^1.0.8",
+    "@ai-sdk/deepseek": "^0.2.14",
+    "@ai-sdk/google": "^1.2.18",
+    "@ai-sdk/openai": "^1.0.14",
+    "@octokit/rest": "^22.0.1",
+    "@rex/shared": "workspace:*",
+    "ai": "^4.0.30",
+    "zod": "^3.23.8"
+  }
+}

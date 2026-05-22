@@ -1,0 +1,14 @@
+{
+  "name": "@rex/action",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@actions/core": "^1.11.1",
+    "@octokit/rest": "^22.0.1",
+    "@rex/shared": "workspace:*"
+  }
+}
