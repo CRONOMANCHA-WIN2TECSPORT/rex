@@ -1,7 +1,7 @@
 import * as core from "@actions/core";
 import { appendFileSync } from "node:fs";
 import { Octokit } from "@octokit/rest";
-import { COMMANDS, type Command } from "@rex/shared";
+import { COMMANDS, type Command, REVIEW_SYSTEM_PROMPT, FIX_SYSTEM_PROMPT } from "@rex/shared";
 
 interface Env {
   EVENT_NAME: string;
@@ -45,7 +45,6 @@ function parseCommand(body: string, mentions: string): { command: Command; promp
     const idx = body.indexOf(m);
     if (idx === -1) continue;
     const after = body.slice(idx + m.length).trim();
-    // Treat the mention itself as the command name (strip leading slash/@).
     const raw = m.replace(/^[/@]+/, "").toLowerCase();
     if ((COMMANDS as readonly string[]).includes(raw)) {
       return { command: raw as Command, prompt: after };
@@ -77,7 +76,7 @@ async function checkPermission(
 ): Promise<{ ok: boolean; reason?: string }> {
   if (required === "any") return { ok: true };
   if (required === "CODEOWNERS") {
-    // Phase 1: not implemented — fall back to "write".
+    // Phase 4: not implemented — fall back to "write".
     required = "write";
   }
   try {
@@ -139,7 +138,15 @@ function setOutput(name: string, value: string): void {
 
 function setEnv(name: string, value: string): void {
   const f = process.env.GITHUB_ENV;
-  if (f) appendFileSync(f, `${name}<<__REX_EOF__\n${value}\n__REX_EOF__\n`);
+  if (!f) return;
+  // Multiline values need a random delimiter to avoid injection from user prompts.
+  const delim = `__REX_EOF_${Math.random().toString(36).slice(2, 10)}__`;
+  appendFileSync(f, `${name}<<${delim}\n${value}\n${delim}\n`);
+}
+
+function maskValue(value: string): void {
+  // GitHub Actions secret masking. Done for the App token only.
+  if (value) console.log(`::add-mask::${value}`);
 }
 
 function skip(reason: string): void {
@@ -148,13 +155,31 @@ function skip(reason: string): void {
   process.exit(0);
 }
 
+function systemPromptFor(command: Command): string {
+  return command === "fix" ? FIX_SYSTEM_PROMPT : REVIEW_SYSTEM_PROMPT;
+}
+
+function buildPrompt(command: Command, repo: string, prNumber: string, userPrompt: string): string {
+  // The PR context guard pins OpenCode to the correct PR even if git state or
+  // tool calls are ambiguous. Pattern from ask-bonk: see
+  // ask-bonk/github/script/orchestrate.ts:455-462.
+  const parts: string[] = [systemPromptFor(command)];
+  if (prNumber) {
+    parts.push(
+      `You are working on PR #${prNumber} in ${repo}. When posting reviews or comments, always target PR #${prNumber}.`,
+    );
+  }
+  if (userPrompt.trim()) parts.push(userPrompt.trim());
+  return parts.join("\n\n");
+}
+
 async function main() {
   const e = env();
   const body = commentBody(e);
   const parsed = parseCommand(body, e.MENTIONS);
   if (!parsed) skip("no rex command in comment");
 
-  const { command, prompt } = parsed!;
+  const { command, prompt: userPrompt } = parsed!;
 
   if (e.FORKS === "true" && e.IS_FORK === "true") {
     skip("fork PRs disabled by `forks: true`");
@@ -177,16 +202,12 @@ async function main() {
   const perm = await checkPermission(octokit, owner, repo, e.ACTOR, requiredPerm);
   if (!perm.ok) skip(perm.reason ?? "permission denied");
 
-  // Fetch the head SHA so the CLI can reference it.
-  let headSha = "";
   if (e.PR_NUMBER) {
+    // Verify the PR exists and is reachable with the workflow token before we
+    // burn an OIDC exchange. Avoids confusing failures later if the actor
+    // commented on something we can't read.
     try {
-      const { data: pr } = await octokit.pulls.get({
-        owner,
-        repo,
-        pull_number: Number(e.PR_NUMBER),
-      });
-      headSha = pr.head.sha;
+      await octokit.pulls.get({ owner, repo, pull_number: Number(e.PR_NUMBER) });
     } catch (err) {
       skip(`failed to fetch PR ${e.PR_NUMBER}: ${errMsg(err)}`);
     }
@@ -203,12 +224,14 @@ async function main() {
     process.exit(1);
   }
 
+  maskValue(appToken);
+
+  const fullPrompt = buildPrompt(command, e.REPOSITORY, e.PR_NUMBER ?? "", userPrompt);
+
   setOutput("skip", "false");
-  setEnv("REX_COMMAND", command);
-  setEnv("REX_PROMPT", prompt);
   setEnv("REX_APP_TOKEN", appToken);
   setEnv("REX_PR_NUMBER", e.PR_NUMBER ?? "");
-  setEnv("REX_HEAD_SHA", headSha);
+  setEnv("REX_PROMPT", fullPrompt);
 
   console.log(
     JSON.stringify({
@@ -218,6 +241,7 @@ async function main() {
       repo: e.REPOSITORY,
       pr: e.PR_NUMBER,
       token_permissions: tokenPerm,
+      prompt_chars: fullPrompt.length,
     }),
   );
 }

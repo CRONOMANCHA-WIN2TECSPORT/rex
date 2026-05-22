@@ -13,8 +13,13 @@ GitHub App ──webhook──▶ rex-server (YOUR VPS)
                        installation token (NO_PUSH / WRITE)
                           │
                           ▼
-       .github/workflows/rex.yml in target repo ── rex-cli ── posts review
+   .github/workflows/rex.yml in target repo ── opencode github run ── posts review
 ```
+
+Note: rex installs [OpenCode](https://opencode.ai) globally inside the Action
+and runs `opencode github run`. The OpenCode binary handles the agent loop,
+tool use, file edits, and review posting. Rex's code is just the VPS gate
+plus the orchestrator that builds the prompt.
 
 ---
 
@@ -468,7 +473,8 @@ Cheap model for everyday reviews, strong model only when applying fixes.
 3. Within 10-20 seconds you should see:
    - The "Rex" workflow start under the **Actions** tab of the repo.
    - `Preflight orchestration` parsing the command and exchanging OIDC.
-   - `Run rex-cli` running the agent loop.
+   - `Install OpenCode` bringing in the agent binary.
+   - `Run OpenCode` executing the agent loop against the checkout.
    - A new review on the PR with summary + inline comments.
 
 ### `/fix` (modifies the PR branch)
@@ -476,22 +482,23 @@ By default requires `admin` on the repo (stricter gate than `/review`). If
 you're not admin, set `permissions: write` on the workflow.
 
 1. On the same PR (or a new one with a typo / missing null check / etc.) comment `/fix`.
-2. Rex runs a loop with read tools **+** edit_file / create_file.
-3. It calls `submit_fix({ summary, changes[] })`.
-4. The CLI applies the edits against the runner's local checkout, runs
-   `git commit -m "[rex] <summary>"` as `rex[bot]@users.noreply.github.com`
-   and `git push origin HEAD:<PR-branch>` using the App token (NOT the workflow's
-   `GITHUB_TOKEN` — this is key, because the App token push **does trigger
-   downstream CI** while `GITHUB_TOKEN` pushes don't).
-5. Posts a comment with a link to the commit and the list of changed files.
+2. The Action exchanges a `WRITE`-scoped installation token and runs
+   `opencode github run`. OpenCode reads the PR, decides what to change,
+   edits files, and commits.
+3. The push goes out as `rex[bot]@users.noreply.github.com` using the App
+   token (NOT the workflow's `GITHUB_TOKEN` — this is key, because the App
+   token push **does trigger downstream CI** while `GITHUB_TOKEN` pushes
+   don't).
+4. OpenCode posts a follow-up comment on the PR describing what changed.
 
 **`/fix` guarantees:**
-- PRs from forks → no-op. Rex can't push to forks. Posts an explanatory comment.
-- Ambiguous `oldStr` (appears >1 times in the file) → that edit is skipped with
-  a reason; remaining edits still apply.
-- If no edit applies, no commit / no push.
+- PRs from forks → no-op. Rex can't push to forks. OpenCode is instructed to
+  post an explanatory comment instead (see `FIX_SYSTEM_PROMPT` in
+  `packages/shared/src/prompts.ts`).
 - The App token used for push is scoped to that single repo
   (`repositoryNames: [repo]`) with the `WRITE` preset (clamped server-side).
+- OpenCode's prompts are versioned in `packages/shared/src/prompts.ts`; edit
+  them to tighten or relax behaviour, then re-pin the workflow's `rex_ref`.
 
 If nothing happens, check the repo's **Actions** tab first (the workflow should
 have triggered) and then the server logs (`docker logs rex-server` or
@@ -537,8 +544,8 @@ Easy to ship to Loki/Datadog/etc.
 | `OIDC exchange failed (404): app not installed` | The GitHub App isn't installed on that repo. | App page → Install → select the repo. |
 | Workflow doesn't fire when commenting | The workflow lives on a non-default branch. GitHub only fires workflows that exist on the default branch. | Merge the workflow into `main` before testing. |
 | `actor X lacks write` in `Preflight` | The commenting user doesn't have write access. | Expected for outside contributors. For PRs from forks, run is skipped anyway. |
-| `submit_review` never called (30 step timeout) | The model goes on tangents. | Lower `max_steps`, revisit `REVIEW_SYSTEM_PROMPT`, or try a different model. |
-| Inline comments outside the diff | The model picked lines not in the PR's hunks. | Rex falls back to issue comments labeled "outside diff". |
+| `Run OpenCode` step times out after 45m | The model is looping or stuck. | Tighten `REVIEW_SYSTEM_PROMPT`, try a smaller / different model, or check OpenCode's logs in the step output. |
+| Inline comments land outside the diff | OpenCode anchored a comment to a line that isn't in any PR hunk. | OpenCode usually downgrades to a top-level comment. If it's frequent, revisit the prompts or upgrade the model. |
 | Webhook received but no action | Phase 1 only logs the webhook. The real gate is the OIDC exchange when the workflow runs. This is normal. | — |
 | GitHub shows "Last delivery: failed (timeout)" | The server takes too long, or the reverse proxy is blocking. | `curl https://rex.yourvps.com/webhooks -X POST -d '{}'` should return `400` quickly. |
 
@@ -546,10 +553,13 @@ Easy to ship to Loki/Datadog/etc.
 
 ## 8. Phase status
 
-Phase 1 (✅ active): `/review` end-to-end.
-Phase 2 (✅ active): `/fix` — apply edits + commit + push to the PR branch.
-Phase 3 (🟡 partial): Anthropic, OpenAI, DeepSeek, Google — ✅. Moonshot/Kimi — pending.
-Phase 4: CODEOWNERS, edit-in-place "rex working…" comment, `/stats`, tests.
+Phase 1 (✅ active): `/review` end-to-end via OpenCode.
+Phase 2 (✅ active): `/fix` — OpenCode edits + commits + pushes to the PR branch.
+Phase 3 (✅ active): Multi-provider via OpenCode's native support (Anthropic,
+OpenAI, DeepSeek, Google, plus anything else OpenCode adds upstream).
+Phase 4: CODEOWNERS, edit-in-place "rex working…" comment, `/stats`, tests,
+project-level `.opencode/opencode.jsonc` for shared MCP/tool config.
 
-Once Phase 3+ ships, you don't need to redeploy the target repo's workflow — only
-the server VPS and the CLI (via `rex_ref` pin or `main`).
+Workflow file rarely needs to change — pin a new `rex_ref` (or set it to
+`main`) to pick up prompt / orchestration improvements without editing the
+target repo. Bumping OpenCode is done via the `opencode_version` input.

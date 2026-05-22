@@ -4,10 +4,12 @@ async function main() {
   const appToken = process.env.REX_APP_TOKEN;
   const repo = process.env.REX_REPOSITORY;
   const prNumber = process.env.REX_PR_NUMBER;
-  const outcome = process.env.CLI_OUTCOME ?? "";
+  const outcome = process.env.OPENCODE_STATUS ?? "";
   const runId = process.env.GITHUB_RUN_ID ?? "";
   const serverUrl = process.env.GITHUB_SERVER_URL ?? "https://github.com";
 
+  // success/skipped/empty → nothing to do. GitHub Actions reports "skipped"
+  // when an upstream step failed and the run step never executed.
   if (outcome === "success" || outcome === "") return;
   if (!appToken || !repo || !prNumber) {
     console.log(

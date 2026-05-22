@@ -15,11 +15,11 @@ GitHub App ── webhook ──▶ rex-server (VPS, Hono)
                           │ verify sig + allowlist
                           │ OIDC token exchange endpoint
                           ▼
-                   repository_dispatch
+                   installation token
                           │
                           ▼
    Target repo .github/workflows/rex.yml runs the composite action,
-   which runs rex-cli (Vercel AI SDK agent loop) and posts the review.
+   which installs OpenCode and runs `opencode github run` to post the review.
 ```
 
 See `plan.md` for the full design.
@@ -28,10 +28,9 @@ See `plan.md` for the full design.
 
 | Path | Description |
 |---|---|
-| `packages/shared` | Zod types, prompts, GitHub helpers shared across server and cli. |
+| `packages/shared` | Zod types, system prompts, GitHub helpers shared by server and action. |
 | `packages/server` | Hono webhook + OIDC token-exchange server (runs on your VPS). |
-| `packages/action` | Composite GitHub Action installed in target repos. |
-| `packages/cli` | The agent CLI that runs inside the Action and posts the review. |
+| `packages/action` | Composite GitHub Action installed in target repos. Installs OpenCode and runs `opencode github run`. |
 
 ## Development
 

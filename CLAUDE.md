@@ -4,15 +4,20 @@ Context for AI assistants working on rex. Read this before making changes.
 
 ## What rex is
 
-Self-hosted PR review agent that mimics [ask-bonk](https://github.com/ask-bonk/ask-bonk)
-(Cloudflare's CF-Workers-only bot) but runs on any VPS. Two commands:
+Self-hosted PR review agent modelled after [ask-bonk](https://github.com/ask-bonk/ask-bonk)
+but with the VPS server replacing Cloudflare Workers. Two commands:
 
 - `/review` — leaves a polished PR review with inline comments + GitHub-suggestion blocks.
 - `/fix` — applies fixes by writing files, committing, and pushing to the PR branch.
 
-Design references in this repo: `plan.md` (full design), `DEPLOY.md` (deployment guide),
-`README.md` (user-facing intro). Sibling repos `../ask-bonk/` and `../pr-agent/` are
-checked out as reference material — read them when porting patterns.
+Like ask-bonk, the agent itself is **[OpenCode](https://opencode.ai)** —
+installed globally inside the Action, invoked as `opencode github run`.
+Rex's own code is just the VPS gate plus the orchestrator that builds the
+prompt and exchanges the OIDC token.
+
+Design references: `plan.md` (full design), `DEPLOY.md` (deployment guide),
+`README.md` (user-facing intro). Sibling repos `../ask-bonk/` and `../pr-agent/`
+are checked out as reference material — read them when porting patterns.
 
 ## Mental model: the three components
 
@@ -24,7 +29,7 @@ split across three runtime environments:
 ┌────────────────┐  webhook  ┌────────┐  workflow run  ┌─────────────────────┐
 │ @rex/server    │◀──────────│ GitHub │───────────────▶│ @rex/action runs    │
 │ (Hono)         │           │  App   │                │  ├─ orchestrate.ts  │
-│                │  OIDC     │        │                │  ├─ @rex/cli (loop) │
+│                │  OIDC     │        │                │  ├─ opencode (loop) │
 │  /webhooks     │◀──────────┼────────┼────────────────│  └─ finalize.ts     │
 │  /auth/exchange│──token───▶│        │                │                     │
 └────────────────┘           └────────┘                └─────────────────────┘
@@ -37,41 +42,52 @@ split across three runtime environments:
 
 2. **`@rex/action` is a composite GitHub Action** — installed via
    `uses: rex-org/rex/packages/action@main` in target repos. It runs in the
-   user's GitHub-hosted runner. It does the work:
+   user's GitHub-hosted runner. It does the plumbing:
    - Parses the slash command from the comment.
    - Validates the commenter's permission via `getCollaboratorPermissionLevel`.
    - Requests an installation token from the VPS server (OIDC exchange).
+   - Builds the system prompt + PR-context guard + user prompt and exports it
+     as `REX_PROMPT` → `PROMPT` for OpenCode to consume.
    - Rewrites git's stored credentials so pushes use the App token (not
      `GITHUB_TOKEN`) — see "Push must use App token" below.
-   - Runs `@rex/cli`.
-   - Posts a failure comment on `always()` if the CLI exited non-zero.
+   - Installs `opencode-ai` globally and runs `opencode github run`.
+   - Posts a failure comment on `always()` if OpenCode exited non-zero.
 
-3. **`@rex/cli` is the agent** — runs inside the Action, has access to the
-   PR's checkout via `REX_REPO_DIR=$GITHUB_WORKSPACE`. Uses Vercel AI SDK
-   (`ai`) with tools (`read_file`, `grep`, `view_diff`, `submit_review`,
-   etc.) to analyze the PR, then posts a review (or applies a fix and pushes).
+3. **OpenCode is the agent** — installed as a global binary inside the Action
+   (`bun install -g opencode-ai@latest`). It reads `MODEL`, `PROMPT`, `AGENT`,
+   `VARIANT`, `PR_NUMBER`, `ISSUE_NUMBER`, `MENTIONS`, `GITHUB_TOKEN` from the
+   environment, performs the agent loop against the checkout, and posts the
+   review (or applies the fix and pushes) using its built-in tools.
 
-**Why this split?** The VPS never sees the code. The agent has full filesystem
+**Why this split?** The VPS never sees the code. OpenCode has full filesystem
 access (because it's inside `actions/checkout`) and we don't pay for VPS
 compute per PR. The VPS is just a thin gate that controls who can use rex.
+
+**Why OpenCode instead of a homegrown loop?** Early rex iterations shipped a
+Vercel AI SDK agent with custom `submit_review`/`submit_fix` terminator tools.
+We swapped to OpenCode for the same reason ask-bonk does: it already covers
+multi-provider tool-use, filesystem tools, git operations, and GitHub review
+posting. The trade-off is that we lose the strict Zod terminator contract —
+the model's GitHub posting is no longer schema-validated. The prompts in
+`packages/shared/src/prompts.ts` are the only steering we have.
 
 ## Repo layout
 
 ```
 packages/
-├── shared/     Zod schemas, prompts, GitHub helpers (auth-app, webhook verify, token scoping)
-├── server/     Hono app + config loader + allowlist + OIDC validation
-├── action/     action.yml + orchestrate.ts (preflight) + finalize.ts
-└── cli/        agent loop (Vercel AI SDK), tools, providers, posting, fix application
+├── shared/   Zod schemas (commands, config), prompts (REVIEW/FIX system prompts), GitHub helpers
+├── server/   Hono app + config loader + allowlist + OIDC validation
+└── action/   action.yml + orchestrate.ts (preflight) + finalize.ts
 ```
 
 Each package is a pnpm workspace member with its own `package.json`. They all
-share `tsconfig.base.json` and use ESM (`"type": "module"`, `.js` import suffixes
-in TS source because `tsx` and TS bundler resolution require them).
+share `tsconfig.base.json` and use ESM (`"type": "module"`, `.js` import
+suffixes in TS source because `tsx` and TS bundler resolution require them).
 
-The CLI is consumed inside the Action via `pnpm --filter @rex/cli start`. The
-action checks out the rex repo to `_rex/` next to the user's checkout, installs
-deps with pnpm, and runs from there.
+OpenCode is installed at runtime inside the Action — there is no `packages/cli`.
+The action checks out the rex repo to `_rex/` next to the user's checkout,
+installs deps with pnpm (for `orchestrate.ts` / `finalize.ts` only), and then
+`bun install -g opencode-ai@<version>` to bring in the agent binary.
 
 ## The security model (read before touching auth)
 
@@ -101,29 +117,30 @@ fails closed to `NO_PUSH`.
 **Push must use the App token, not `GITHUB_TOKEN`** — `GITHUB_TOKEN` pushes
 deliberately don't trigger downstream workflows (GitHub policy), so CI never
 re-runs after `/fix`. The Action's "Configure Git for App token" step
-rewrites `origin` URL with the App token to fix this. Don't change that step
-without understanding why.
+rewrites `origin` URL with the App token to fix this. The `Run OpenCode` step
+then exports `USE_GITHUB_TOKEN=true` + `GITHUB_TOKEN=$REX_APP_TOKEN` so
+OpenCode itself authenticates API calls with the same App token. Don't change
+either step without understanding why.
 
-**Path traversal**: `safeResolve()` in `cli/src/agent/tools.ts` and `cli/src/github/fix.ts`
-rejects paths that resolve outside `repoDir`. Always use it for any LLM-supplied path.
+**Path traversal**: not enforced in our code anymore — OpenCode's tools have
+their own safeguards. If we add Node tools that take LLM-supplied paths,
+re-introduce a `safeResolve()` helper before merging.
 
-## Agent loop contract
+## How the prompt is assembled
 
-The model controls the loop until it calls a terminator tool:
+`packages/action/script/orchestrate.ts > buildPrompt()` concatenates:
 
-- `/review` → `submit_review({ summary, findings: Finding[] })`. Defined in `shared/types.ts`.
-- `/fix` → `submit_fix({ summary, changes: FileEdit[] })`.
+1. The matching system prompt from `packages/shared/src/prompts.ts`
+   (`REVIEW_SYSTEM_PROMPT` or `FIX_SYSTEM_PROMPT`).
+2. A PR-context guard pinning the model to the right PR — pattern from
+   `ask-bonk/github/script/orchestrate.ts:455-462`. Without this guard the
+   model can drift to a different PR if git state is ambiguous.
+3. The free-form user prompt extracted from the invoking comment (text after
+   the `/review` or `/fix` mention).
 
-Both are zod-validated and capture the result into a closure (`result.current`).
-The loop has `maxSteps: 30`. If the model never calls the terminator, the CLI
-errors out — **the model's free text is never posted to GitHub**. Output schema
-is the only contract.
-
-For `/fix`, edits are validated by `applyEdit()` in `cli/src/github/fix.ts`:
-- Empty `oldStr` + missing file → create (with `mkdir -p`).
-- `oldStr` appearing 0 times → skipped with reason.
-- `oldStr` appearing >1 times → skipped with reason (forces disambiguation).
-- PR from a fork → entire `/fix` aborts; rex cannot push to forks.
+The result is written to `$GITHUB_ENV` as `REX_PROMPT` and surfaced to
+OpenCode as `PROMPT`. OpenCode treats it as the user message and starts its
+own loop with its own tools.
 
 ## Conventions
 
@@ -133,65 +150,59 @@ For `/fix`, edits are validated by `applyEdit()` in `cli/src/github/fix.ts`:
   ask-bonk uses `better-result`; we deliberately don't.
 - **No structured logger.** Everything is `console.log(JSON.stringify({event: "name", ...}))`.
   The `event` field is the discriminator. Easy to grep, easy to ship to Loki.
-- **No comments unless the WHY is non-obvious.** Specifically: explain non-obvious
-  invariants (the App-token-vs-GITHUB_TOKEN-pushes thing, the `Record<string, unknown>`
-  intersection in @octokit/auth-app v8, etc.). Don't restate what the code does.
-- **Zod for boundaries.** Server config, OIDC body, tool inputs, agent submissions.
-  Internal types are plain TS.
+- **No comments unless the WHY is non-obvious.** Specifically: explain
+  non-obvious invariants (App-token-vs-`GITHUB_TOKEN` pushes, the
+  `Record<string, unknown>` intersection in `@octokit/auth-app` v8, etc.).
+  Don't restate what the code does.
+- **Zod for boundaries.** Server config, OIDC body, allowlist. Internal types
+  are plain TS.
 - **JSON-only HTTP error responses.** `{ error: "...", reason: "..." }` shape.
-- **Path traversal protection is mandatory** for any LLM-supplied path.
 
 ## How to add things
 
 ### Add a new LLM provider
 
-1. Install `@ai-sdk/<provider>` in `packages/cli/package.json`.
-2. Add a case in `cli/src/agent/providers.ts > resolveModel(spec)`.
-3. For OpenAI-compatible providers (Moonshot/Kimi, DeepSeek's older OpenAI-compat
-   endpoint), use `createOpenAI({ baseURL })` from `@ai-sdk/openai` rather than
-   adding a whole new SDK package.
-4. Document the API key env var in `DEPLOY.md > 4.3 Provider secrets`.
+OpenCode supports providers natively. To add one:
 
-### Add a new agent tool
+1. Document the API key env var in `DEPLOY.md > 4.3 Provider secrets`.
+2. Check OpenCode's docs for the model string format (e.g. `mistral/...`).
+3. Make sure the workflow exposes the provider key in `env:` so OpenCode
+   picks it up.
 
-1. Add to `cli/src/agent/tools.ts` inside `readOnlyTools()` (read-only) or
-   inside `buildFixTools()` (mutating).
-2. Use `tool({ description, parameters: z.object({...}), execute })`.
-3. Return `{ ok: boolean, ...data }` or `{ ok: false, error: string }`. Keep
-   payloads under a few KB — tool results re-enter the context window.
-4. Use `safeResolve()` for any path input.
-5. **Do not** add the tool's return type to a `Record<string, ReturnType<typeof tool>>` —
-   that collapses the heterogeneous tool types into one. Let TS infer the shape
-   of the returned object (see git history if curious).
+We do not maintain a provider registry in our code anymore — that lives in
+OpenCode.
 
 ### Add a new slash command (e.g. `/explain`)
 
-1. Add to `COMMANDS` in `shared/src/types.ts`.
-2. Decide its permission defaults in `action/script/orchestrate.ts > defaultsFor()`.
-3. Add a system prompt in `shared/src/prompts.ts`.
-4. In `cli/src/agent/loop.ts`, add a branch that selects the right tools +
-   prompt. Define a `submit_<command>` terminator tool.
-5. In `cli/src/index.ts`, add the case that interprets the submission and
-   posts back to GitHub.
-6. Update `mentions` default in `action/action.yml` if you want it active by default.
+1. Add to `COMMANDS` in `packages/shared/src/types.ts`.
+2. Decide its permission defaults in `packages/action/script/orchestrate.ts > defaultsFor()`.
+3. Add a system prompt constant in `packages/shared/src/prompts.ts` (export
+   it and consume it from `systemPromptFor()` in `orchestrate.ts`).
+4. Update `mentions` default in `packages/action/action.yml` if you want it
+   active by default.
 
-### Change the review formatting
+There's no CLI branch to edit — the system prompt and OpenCode's tools do
+the work.
 
-`cli/src/render/summary.ts > renderReviewBody()` and `renderInlineComment()`.
-The `\`\`\`suggestion` blocks are what turn into "Commit suggestion" buttons —
-don't break those.
+### Steer OpenCode differently
+
+If review/fix behaviour needs tweaking, the only lever you have is the
+system prompts in `packages/shared/src/prompts.ts`. Edit them, redeploy the
+rex ref the workflow pins (`rex_ref:` input). OpenCode's behaviour can also
+be configured via a `.opencode/opencode.jsonc` checked into the rex repo —
+ask-bonk uses this for MCP servers.
 
 ### Change the allowlist semantics
 
-`server/src/allowlist.ts > checkAllowlist()`. The function is called from
-**both** webhook ingestion (logging) and OIDC exchange (the actual gate).
+`packages/server/src/allowlist.ts > checkAllowlist()`. The function is called
+from **both** webhook ingestion (logging) and OIDC exchange (the actual gate).
 Whatever you change applies to both paths.
 
 ## Commands
 
 ```bash
 # Setup
-pnpm install              # ~75MB. .npmrc disables auto-install-peers.
+pnpm install              # .npmrc disables auto-install-peers.
 
 # Validate
 pnpm typecheck            # runs tsc --noEmit in each package
@@ -199,9 +210,6 @@ pnpm -r typecheck         # same, recursive
 
 # Run server locally (needs rex.config.yml + REX_WEBHOOK_SECRET)
 pnpm dev:server           # tsx watch
-
-# Run CLI locally (needs all REX_* env vars set; not easy outside an Action)
-pnpm cli
 ```
 
 There are no tests yet — Phase 4.
@@ -210,34 +218,33 @@ There are no tests yet — Phase 4.
 
 - **Don't `--no-verify` git commits** or skip hooks unless explicitly asked.
 - **Don't auto-install peer deps** — `.npmrc` has `auto-install-peers=false`.
-  Adding a real dep is fine; pulling react in via `@ai-sdk/react` is a waste.
-- **Don't add a result library / structured logger / DI framework.** This project
-  intentionally stays close to vanilla TS + Hono + Octokit.
-- **Don't post free-text from the LLM directly to GitHub.** Always go through
-  `submit_review` / `submit_fix`. The schema is the safety net.
-- **Don't bypass `safeResolve()`** for LLM-supplied paths. Even with a scoped
-  token, the runner can write outside the repo otherwise.
+- **Don't add a result library / structured logger / DI framework.** This
+  project intentionally stays close to vanilla TS + Hono + Octokit.
 - **Don't change push auth** from the App token. `GITHUB_TOKEN` pushes won't
   trigger downstream workflows.
+- **Don't reintroduce a Vercel AI SDK loop** to "regain" the Zod terminator.
+  If the prompts aren't enough, fix the prompts first.
 - **Don't add `CODEOWNERS` parsing inline.** It's a planned Phase 4 feature —
   port from `ask-bonk/github/script/orchestrate.ts:135-187`.
-- **Don't use `bun`.** The project standardized on pnpm 9 + Node 22 + tsx.
-  ask-bonk uses Bun; we deliberately don't.
+- **Don't use Node.js to run the orchestrator differently.** It runs through
+  `pnpm exec tsx` in the Action — keep that single entry point.
 
 ## Non-obvious type issues to remember
 
 - `@octokit/auth-app@8` has a `StrategyOptions` type that's an intersection of
-  a union plus `Record<string, unknown>`. TS can't narrow it from `{ appId, privateKey }`
-  alone. Pass options through `appAuthOpts()` in `shared/src/github.ts` which casts.
-- `ai` package's `Tool<T, R>` doesn't infer well through `Record<string, Tool>`.
-  Don't annotate tool collections; let TS infer the heterogeneous object type.
+  a union plus `Record<string, unknown>`. TS can't narrow it from
+  `{ appId, privateKey }` alone. Pass options through `appAuthOpts()` in
+  `packages/shared/src/github.ts`, which casts.
 
 ## Roadmap
 
-Phase 1 ✅: `/review` end-to-end.
-Phase 2 ✅: `/fix` (apply + commit + push to PR branch).
-Phase 3 🟡: Providers wired — Anthropic, OpenAI, DeepSeek, Google. Pending: Moonshot/Kimi.
-Phase 4: CODEOWNERS check, edit-in-place "rex working…" comment, `/stats` endpoint,
-         vitest tests, compile-to-JS for slimmer prod Docker image.
+Phase 1 ✅: `/review` end-to-end (via OpenCode).
+Phase 2 ✅: `/fix` (apply + commit + push to PR branch, also via OpenCode).
+Phase 3 ✅: Multi-provider via OpenCode's native support (Anthropic, OpenAI,
+DeepSeek, Google, etc.).
+Phase 4: CODEOWNERS check, edit-in-place "rex working…" comment, `/stats`
+endpoint, vitest tests, and a project-level `.opencode/opencode.jsonc` for
+shared MCP/tool configuration.
 
-When working on Phase N, update `plan.md > Roadmap por fases` and `DEPLOY.md > 8. Phase status`.
+When working on Phase N, update `plan.md > Roadmap por fases` and
+`DEPLOY.md > 8. Phase status`.
