@@ -111,19 +111,19 @@ runs:
       with:
         repository: ${{ inputs.rex_repository }}
         ref: ${{ inputs.rex_ref }}
-        path: _rex
+        path: ${{ runner.temp }}/_rex
 
     - name: Install rex deps
       if: success() && steps.mentions.outputs.skip != 'true'
       shell: bash
-      working-directory: _rex
+      working-directory: ${{ runner.temp }}/_rex
       run: pnpm install --frozen-lockfile=false
 
     - name: Preflight orchestration
       if: success() && steps.mentions.outputs.skip != 'true'
       id: preflight
       shell: bash
-      working-directory: _rex
+      working-directory: ${{ runner.temp }}/_rex
       env:
         EVENT_NAME: ${{ github.event_name }}
         COMMENT_BODY: ${{ github.event.comment.body }}
@@ -204,7 +204,7 @@ runs:
     - name: Finalize
       if: always() && steps.mentions.outputs.skip != 'true' && steps.preflight.outputs.skip != 'true'
       shell: bash
-      working-directory: _rex
+      working-directory: ${{ runner.temp }}/_rex
       env:
         REX_APP_TOKEN: ${{ env.REX_APP_TOKEN }}
         REX_REPOSITORY: ${{ github.repository }}
