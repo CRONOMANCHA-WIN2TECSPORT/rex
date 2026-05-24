@@ -9,7 +9,10 @@ import type { TokenPermissions, TokenPermissionsInput } from "./types.js";
 // We pass options through this helper instead of inline.
 type AppAuthOpts = Parameters<typeof createAppAuth>[0];
 function appAuthOpts(creds: AppCredentials, installationId?: number): AppAuthOpts {
-  return { appId: creds.appId, privateKey: creds.privateKey, installationId } as AppAuthOpts;
+  if (installationId !== undefined) {
+    return { appId: creds.appId, privateKey: creds.privateKey, installationId } as AppAuthOpts;
+  }
+  return { appId: creds.appId, privateKey: creds.privateKey } as AppAuthOpts;
 }
 
 export interface AppCredentials {

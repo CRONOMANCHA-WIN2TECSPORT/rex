@@ -42,6 +42,16 @@ export function exchangeRoute(ctx: ServerContext): Hono {
 
     const { owner, repo } = splitRepository(claims);
 
+    console.log(
+      JSON.stringify({
+        event: "exchange_request",
+        owner,
+        repo,
+        actor: claims.actor,
+        repository_claim: claims.repository,
+      }),
+    );
+
     const allow = checkAllowlist(ctx.config.allowlist, {
       owner,
       repo,
@@ -71,7 +81,9 @@ export function exchangeRoute(ctx: ServerContext): Hono {
     let installationId: number;
     try {
       installationId = await lookupInstallationId(ctx.creds, owner, repo);
+      console.log(JSON.stringify({ event: "installation_found", owner, repo, installationId }));
     } catch (err) {
+      console.log(JSON.stringify({ event: "installation_lookup_failed", owner, repo, error: errMsg(err) }));
       return c.json({ error: "app not installed", detail: errMsg(err) }, 404);
     }
 
