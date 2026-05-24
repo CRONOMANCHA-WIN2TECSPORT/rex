@@ -104,7 +104,6 @@ runs:
       uses: actions/setup-node@v4
       with:
         node-version: "22"
-        cache: pnpm
 
     - name: Checkout rex
       if: success() && steps.mentions.outputs.skip != 'true'
