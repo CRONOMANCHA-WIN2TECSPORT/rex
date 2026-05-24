@@ -40,7 +40,7 @@ inputs:
   rex_repository:
     description: "GitHub repo containing rex (for self-hosted forks)."
     required: false
-    default: "rex-org/rex"
+    default: "CRONOMANCHA-WIN2TECSPORT/rex"
   forks:
     description: "If 'true', silently skip fork PRs. If 'false', run normally."
     required: false
