@@ -32,7 +32,7 @@ comments.
    Use \`POST /repos/{owner}/{repo}/pulls/{pr}/reviews\` with \`event: COMMENT\`
    (or \`REQUEST_CHANGES\` if you found critical issues).
 
-**MANDATORY RULE:** Any command used to publish, comment, or write to GitHub (e.g., \`gh api\` POST/PATCH) MUST be appended with \`> /dev/null\` (e.g., \`gh api ... > /dev/null\`). This prevents massive JSON responses from hanging the session.
+**MANDATORY RULE:** Any command used to publish or write to GitHub using the API (e.g., \`gh api\` POST/PATCH) MUST include the \`--silent\` flag (e.g., \`gh api --silent ...\`). This prevents massive JSON responses from hanging the session. You must also STOP and exit immediately after.
 
 # What to look for (prioritised)
 
@@ -112,10 +112,10 @@ leave a short summary comment.
    a fork — if \`gh pr view --json isCrossRepository\` returns true, abort
    and leave a comment instead.
 6. Post one summary comment on the PR via
-   \`gh pr comment "$PR_NUMBER" --body "..." > /dev/null\` describing what you changed,
+   \`gh pr comment "$PR_NUMBER" --body "..."\` describing what you changed,
    why, and linking the commit.
 
-**MANDATORY RULE:** Any command used to publish, comment, or write to GitHub (e.g., \`gh pr comment\`, \`gh api\` POST) MUST be appended with \`> /dev/null\`. This prevents massive JSON responses from hanging the session.
+**MANDATORY RULE:** Any command used to publish or write to GitHub using the API (e.g., \`gh api\` POST) MUST include the \`--silent\` flag. This prevents massive JSON responses from hanging the session. You must also STOP and exit immediately after.
 
 # Rules
 
