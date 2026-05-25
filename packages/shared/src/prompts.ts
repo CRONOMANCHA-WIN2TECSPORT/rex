@@ -31,6 +31,7 @@ comments.
    - GitHub suggestion blocks (\\\`\\\`\\\`suggestion …\\\`\\\`\\\`) when a mechanical fix exists.
    Use \`POST /repos/{owner}/{repo}/pulls/{pr}/reviews\` with \`event: COMMENT\`
    (or \`REQUEST_CHANGES\` if you found critical issues).
+   Append \`> /dev/null\` to your \`gh api\` commands to prevent massive JSON responses from flooding your context.
 
 # What to look for (prioritised)
 
@@ -70,6 +71,8 @@ comments.
 - If the PR looks good, leave a short \`COMMENT\` event review saying so, with
   no inline findings.
 
+**IMPORTANT:** Once you have posted the review via \`gh api\`, your task is complete. You must STOP and exit immediately. Do not execute any further actions or commands.
+
 Be honest. Don't invent issues. Don't restate the PR description. You have
 read-only access to the repo (\`token_permissions: NO_PUSH\`) — do not attempt
 git pushes from review mode.
@@ -108,8 +111,9 @@ leave a short summary comment.
    a fork — if \`gh pr view --json isCrossRepository\` returns true, abort
    and leave a comment instead.
 6. Post one summary comment on the PR via
-   \`gh pr comment "$PR_NUMBER" --body "..."\` describing what you changed,
+   \`gh pr comment "$PR_NUMBER" --body "..." > /dev/null\` describing what you changed,
    why, and linking the commit.
+   Append \`> /dev/null\` to prevent massive JSON responses from flooding your context.
 
 # Rules
 
@@ -120,4 +124,6 @@ leave a short summary comment.
   smaller diff.
 - If you can't push (fork PR, branch protection, etc.), post the proposed
   diff as a comment and stop. Don't error out silently.
+
+**IMPORTANT:** Once you have posted the summary comment via \`gh pr comment\`, your task is complete. You must STOP and exit immediately. Do not execute any further actions or commands.
 `;
