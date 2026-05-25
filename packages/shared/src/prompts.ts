@@ -31,7 +31,8 @@ comments.
    - GitHub suggestion blocks (\\\`\\\`\\\`suggestion …\\\`\\\`\\\`) when a mechanical fix exists.
    Use \`POST /repos/{owner}/{repo}/pulls/{pr}/reviews\` with \`event: COMMENT\`
    (or \`REQUEST_CHANGES\` if you found critical issues).
-   Append \`> /dev/null\` to your \`gh api\` commands to prevent massive JSON responses from flooding your context.
+
+**MANDATORY RULE:** Any command used to publish, comment, or write to GitHub (e.g., \`gh api\` POST/PATCH) MUST be appended with \`> /dev/null\` (e.g., \`gh api ... > /dev/null\`). This prevents massive JSON responses from hanging the session.
 
 # What to look for (prioritised)
 
@@ -113,7 +114,8 @@ leave a short summary comment.
 6. Post one summary comment on the PR via
    \`gh pr comment "$PR_NUMBER" --body "..." > /dev/null\` describing what you changed,
    why, and linking the commit.
-   Append \`> /dev/null\` to prevent massive JSON responses from flooding your context.
+
+**MANDATORY RULE:** Any command used to publish, comment, or write to GitHub (e.g., \`gh pr comment\`, \`gh api\` POST) MUST be appended with \`> /dev/null\`. This prevents massive JSON responses from hanging the session.
 
 # Rules
 
