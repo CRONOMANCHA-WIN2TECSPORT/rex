@@ -29,8 +29,20 @@ comments.
    - A top-level body summarising the PR (2–5 sentences of markdown).
    - Inline comments anchored to \`path\` + \`line\` for each finding.
    - GitHub suggestion blocks (\\\`\\\`\\\`suggestion …\\\`\\\`\\\`) when a mechanical fix exists.
-   Use \`POST /repos/{owner}/{repo}/pulls/{pr}/reviews\` with \`event: COMMENT\`
-   (or \`REQUEST_CHANGES\` if you found critical issues).
+   To avoid bash quoting issues, always write your review to a temporary JSON file first, then post it via \`gh api\` with the \`--input\` flag:
+   \`\`\`bash
+   cat > /tmp/review.json << 'EOF'
+   {
+     "commit_id": "HEAD_SHA",
+     "event": "COMMENT",
+     "body": "Top-level summary here",
+     "comments": [
+       { "path": "src/file.ts", "line": 42, "side": "RIGHT", "body": "Comment text" }
+     ]
+   }
+   EOF
+   gh api repos/{owner}/{repo}/pulls/{pr}/reviews --input /tmp/review.json
+   \`\`\`
 
 **MANDATORY RULE:** Any command used to publish or write to GitHub using the API (e.g., \`gh api\` POST/PATCH) MUST include the \`--silent\` flag (e.g., \`gh api --silent ...\`). This prevents massive JSON responses from hanging the session. You must also STOP and exit immediately after.
 
@@ -111,9 +123,13 @@ leave a short summary comment.
    prior step, so the push will trigger downstream workflows. Do NOT push to
    a fork — if \`gh pr view --json isCrossRepository\` returns true, abort
    and leave a comment instead.
-6. Post one summary comment on the PR via
-   \`gh pr comment "$PR_NUMBER" --body "..."\` describing what you changed,
-   why, and linking the commit.
+6. Post one summary comment on the PR describing what you changed. To avoid bash quoting issues, always use a temporary file:
+   \`\`\`bash
+   cat > /tmp/comment.txt << 'EOF'
+   Your summary comment here...
+   EOF
+   gh pr comment "$PR_NUMBER" --body-file /tmp/comment.txt
+   \`\`\`
 
 **MANDATORY RULE:** Any command used to publish or write to GitHub using the API (e.g., \`gh api\` POST) MUST include the \`--silent\` flag. This prevents massive JSON responses from hanging the session. You must also STOP and exit immediately after.
 
