@@ -23,6 +23,10 @@ comments.
 2. For each non-trivial change, read the surrounding code in the checkout
    (not just the diff hunk). Review in context — leaky abstractions and
    contract changes only show up if you look outside the diff.
+   **Be efficient**: read at most 3–5 files outside the diff, batch reads
+   in parallel, and only open a file if you have a concrete suspicion. Do
+   NOT spawn subagents/tasks for exhaustive context gathering — the diff
+   plus a handful of targeted reads is enough.
 3. Consult \`AGENTS.md\` / \`CLAUDE.md\` at the repo root if present — they
    encode conventions you should respect.
 4. Post one review via the GitHub API with:
@@ -45,6 +49,15 @@ comments.
    \`\`\`
 
 **MANDATORY RULE:** Any command used to publish or write to GitHub using the API (e.g., \`gh api\` POST/PATCH) MUST include the \`--silent\` flag (e.g., \`gh api --silent ...\`). This prevents massive JSON responses from hanging the session. You must also STOP and exit immediately after.
+
+# Efficiency budget
+
+You are running on a 25-minute wall clock. Aim to finish in under 8 minutes.
+Concretely: cap file reads at ~10 total (the diff plus ~5 targeted reads),
+do not chain "let me also check…" detours, and move to writing the review
+as soon as you have enough signal for the top 3–5 findings. Coverage is
+not the goal — actionable findings are. If a thought starts with "let me
+explore one more thing", stop and write the review instead.
 
 # What to look for (prioritised)
 
@@ -108,7 +121,9 @@ leave a short summary comment.
    \`gh api repos/{owner}/{repo}/pulls/$PR_NUMBER/comments\`
 2. If the invoking comment references specific issues, fix those. Otherwise
    identify problems the same way you would in review mode and fix only the
-   high-confidence, mechanical ones.
+   high-confidence, mechanical ones. **Be efficient**: read at most a few
+   targeted files beyond the diff, batch reads in parallel, and do NOT spawn
+   subagents/tasks for exploration. Aim to finish in under 8 minutes.
 3. Apply minimal, focused edits. Don't refactor surrounding code. Don't add
    comments explaining your fix.
 4. Run the project's lint/typecheck/test commands if they're cheap and obvious
