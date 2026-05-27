@@ -143,7 +143,7 @@ runs:
         WORKSPACE_DIR: ${{ github.workspace }}
       run: pnpm exec tsx packages/action/script/orchestrate.ts
 
-    - name: Install OpenCode
+    - name: Install OpenCode and tools
       if: success() && steps.mentions.outputs.skip != 'true' && steps.preflight.outputs.skip != 'true'
       shell: bash
       env:
@@ -156,7 +156,9 @@ runs:
         else
           bun install -g "opencode-ai@${OPENCODE_VERSION}"
         fi
+        bun install -g changie
         echo "opencode version: $(opencode version 2>/dev/null || echo 'unknown')"
+        echo "changie version: $(changie --version 2>/dev/null || echo 'unknown')"
 
     - name: Configure Git for App token
       if: success() && steps.mentions.outputs.skip != 'true' && steps.preflight.outputs.skip != 'true'
