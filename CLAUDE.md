@@ -179,6 +179,26 @@ sanitized before we act on it or log it — ported from ask-bonk:
 - The review JSON the model emits is read with `readFileCapped()` and every
   field is truncated to a `MAX_*` budget before posting.
 
+## Hung inference / provider stalls (exit 124)
+
+A provider (seen with deepseek) can intermittently **stall mid-stream** — the
+inference HTTP request stops emitting chunks with no error. OpenCode has no
+per-request timeout by default, so it waits forever and the whole job hangs
+until `timeout 20m opencode` kills it (**exit 124**, ~20 min of runner burned).
+This looks identical in the logs to the old 422-loop: the last line is always
+`llm runtime selected` right before the hang. They are different failures — the
+422-loop is fixed by `post_review.ts`; the stall is bounded here.
+
+The "Run OpenCode" step injects per-provider timeouts via
+`OPENCODE_CONFIG_CONTENT` (higher precedence than repo config, so it always
+wins): `provider.<provider>.options.chunkTimeout` aborts a stream that stops
+emitting chunks (the real fix for a mid-stream stall) and `.options.timeout`
+bounds a request that never starts. `<provider>` is derived from `MODEL` (the
+part before `/`). Tunable via the `inference_chunk_timeout_ms` /
+`inference_timeout_ms` action inputs. This converts an indefinite 20-min hang
+into a bounded abort (~90s). It does NOT remove the outer `timeout 20m`, which
+stays as the last-resort backstop. See https://opencode.ai/docs/config.
+
 ## Conventions
 
 - **TypeScript ESM**: `"type": "module"`, `.js` import suffix in source.

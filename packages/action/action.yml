@@ -57,6 +57,14 @@ inputs:
     description: "Install OpenCode from dev branch instead of the released version."
     required: false
     default: "false"
+  inference_timeout_ms:
+    description: "Per-request LLM timeout (ms) for a request that never starts streaming. Maps to OpenCode provider.<provider>.options.timeout."
+    required: false
+    default: "300000"
+  inference_chunk_timeout_ms:
+    description: "Abort a stream that stops emitting chunks for this many ms (ms). Maps to OpenCode provider.<provider>.options.chunkTimeout. This is what stops an intermittent mid-stream provider stall from hanging the whole job until the outer timeout."
+    required: false
+    default: "90000"
 
 runs:
   using: "composite"
@@ -190,6 +198,8 @@ runs:
         MENTIONS: ${{ inputs.mentions }}
         PR_NUMBER: ${{ env.REX_PR_NUMBER }}
         ISSUE_NUMBER: ${{ env.REX_PR_NUMBER }}
+        INFERENCE_TIMEOUT_MS: ${{ inputs.inference_timeout_ms }}
+        INFERENCE_CHUNK_TIMEOUT_MS: ${{ inputs.inference_chunk_timeout_ms }}
       run: |
         set +e
         # GH_TOKEN was written to GITHUB_ENV by the OIDC exchange in orchestrate.ts.
@@ -198,6 +208,19 @@ runs:
         # rewritten in the "Configure Git" step above.
         export USE_GITHUB_TOKEN=true
         export GITHUB_TOKEN="${REX_APP_TOKEN}"
+        # Bound stalled inference. A provider can intermittently stall mid-stream
+        # (no error, no more chunks); without a per-request timeout OpenCode waits
+        # forever and the whole job hangs until the `timeout 20m` below kills it
+        # (exit 124, ~20 min of runner burned). OpenCode's `chunkTimeout` aborts a
+        # stream that stops emitting chunks; `timeout` bounds a request that never
+        # starts. We inject them for the current provider (the part of MODEL before
+        # `/`) via OPENCODE_CONFIG_CONTENT, which has higher precedence than repo
+        # config so it always applies. See https://opencode.ai/docs/config.
+        PROVIDER="${MODEL%%/*}"
+        if [ -n "$PROVIDER" ] && [ "$PROVIDER" != "$MODEL" ]; then
+          export OPENCODE_CONFIG_CONTENT="{\"provider\":{\"${PROVIDER}\":{\"options\":{\"timeout\":${INFERENCE_TIMEOUT_MS},\"chunkTimeout\":${INFERENCE_CHUNK_TIMEOUT_MS}}}}}"
+          echo "{\"event\":\"opencode_inference_timeouts\",\"provider\":\"${PROVIDER}\",\"timeout_ms\":${INFERENCE_TIMEOUT_MS},\"chunk_timeout_ms\":${INFERENCE_CHUNK_TIMEOUT_MS}}"
+        fi
         timeout 20m opencode github run
         EXIT_CODE=$?
         echo "exit_code=$EXIT_CODE" >> "$GITHUB_OUTPUT"
