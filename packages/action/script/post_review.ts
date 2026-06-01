@@ -53,44 +53,49 @@ interface OutComment {
   start_side?: "RIGHT";
 }
 
-// Build, per file, the set of new-file line numbers that are part of the diff
-// (added + context lines inside a hunk). These are the only lines a RIGHT-side
-// review comment can legally anchor to.
+// Build, per file, a map of new-file line number -> hunk id for every line that
+// is part of the diff (added + context lines inside a hunk). These are the only
+// lines a RIGHT-side review comment can legally anchor to. We keep the hunk id
+// (not just a flat set) because a multi-line comment's start_line..line range
+// must stay within a SINGLE hunk — GitHub 422s a cross-hunk range, and that
+// 422 would reject the whole inline batch.
 async function diffLineIndex(
   octokit: Octokit,
   owner: string,
   repo: string,
   pull_number: number,
-): Promise<Map<string, Set<number>>> {
+): Promise<Map<string, Map<number, number>>> {
   const files = await octokit.paginate(octokit.pulls.listFiles, {
     owner,
     repo,
     pull_number,
     per_page: 100,
   });
-  const index = new Map<string, Set<number>>();
+  const index = new Map<string, Map<number, number>>();
   for (const f of files) {
     if (!f.patch) continue; // binary / too-large files have no patch
-    const valid = new Set<number>();
+    const valid = new Map<number, number>();
     let newLine = 0;
+    let hunkId = 0;
     let inHunk = false;
     for (const line of f.patch.split("\n")) {
       if (line.startsWith("@@")) {
         const m = line.match(/@@ -\d+(?:,\d+)? \+(\d+)/);
         if (m) newLine = parseInt(m[1], 10);
+        hunkId++;
         inHunk = true;
         continue;
       }
       if (!inHunk) continue;
       const c = line[0];
       if (c === "+") {
-        valid.add(newLine);
+        valid.set(newLine, hunkId);
         newLine++;
       } else if (c === "-" || c === "\\") {
         // removed line (old side only) or "\ No newline at end of file" marker
       } else {
         // context line (leading space) — commentable, advances the new side
-        valid.add(newLine);
+        valid.set(newLine, hunkId);
         newLine++;
       }
     }
@@ -182,8 +187,15 @@ async function run(): Promise<void> {
       side: "RIGHT",
       body: truncateChars(stripControlChars(String(c?.body ?? "")), MAX_COMMENT_BODY_CHARS),
     };
+    // Only attach a multi-line range when both ends sit in the SAME hunk —
+    // otherwise GitHub 422s the range. If they don't, demote to a single-line
+    // comment anchored at `line` (still posts) rather than dropping it.
     const startLine = c?.start_line;
-    if (typeof startLine === "number" && startLine < line && valid.has(startLine)) {
+    if (
+      typeof startLine === "number" &&
+      startLine < line &&
+      valid.get(startLine) === valid.get(line)
+    ) {
       out.start_line = startLine;
       out.start_side = "RIGHT";
     }

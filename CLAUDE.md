@@ -169,8 +169,11 @@ Everything attacker-influenceable (anyone who can comment on a PR) is capped +
 sanitized before we act on it or log it — ported from ask-bonk:
 
 - The free-form text after `/review` is run through `sanitizeUserPrompt()`
-  (strip control chars, cap bytes) and fenced as `<user_request>` data in the
-  prompt so it can't override the system prompt (prompt-injection guard).
+  (strip control chars, cap bytes) and fenced as `<user_request NONCE>` data in
+  the prompt so it can't override the system prompt (prompt-injection guard).
+  The fence delimiter carries a random per-run nonce — a static `<user_request>`
+  tag is escapable (the commenter types the literal closing tag), the nonce is
+  not. Same trick `setEnv()` uses for the `$GITHUB_ENV` heredoc.
 - All logged errors go through `safeErr()` (redact the App/OIDC token, strip
   control chars, truncate). Never log a raw `err.message` that touched a token.
 - The review JSON the model emits is read with `readFileCapped()` and every

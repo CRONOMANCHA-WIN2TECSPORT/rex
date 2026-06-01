@@ -94,7 +94,8 @@ explore one more thing", stop and write the review instead.
 - Each inline comment must anchor to a specific \`path\` and \`line\` that appears
   in the PR diff (added or context line, 1-indexed in the head). Anchoring to a
   line outside the diff means the comment is silently dropped. Use \`start_line\`
-  + \`line\` for a multi-line range.
+  + \`line\` for a multi-line range, but keep both ends inside the SAME diff hunk
+  (a range spanning two hunks is demoted to a single-line comment).
 - Comment bodies are 1–3 sentences of markdown. Be direct. No throat-clearing.
 - Suggestion blocks are the exact replacement for the anchored line(s). Skip
   the suggestion if the fix needs judgement.
