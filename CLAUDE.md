@@ -75,9 +75,9 @@ the model's GitHub posting is no longer schema-validated. The prompts in
 
 ```
 packages/
-├── shared/   Zod schemas (commands, config), prompts (REVIEW/FIX system prompts), GitHub helpers
+├── shared/   Zod schemas (commands, config), prompts (REVIEW/FIX system prompts), GitHub helpers, sanitize.ts (input-hardening)
 ├── server/   Hono app + config loader + allowlist + OIDC validation
-└── action/   action.yml + orchestrate.ts (preflight) + finalize.ts
+└── action/   action.yml + orchestrate.ts (preflight) + post_review.ts (review publisher) + finalize.ts
 ```
 
 Each package is a pnpm workspace member with its own `package.json`. They all
@@ -141,6 +141,40 @@ re-introduce a `safeResolve()` helper before merging.
 The result is written to `$GITHUB_ENV` as `REX_PROMPT` and surfaced to
 OpenCode as `PROMPT`. OpenCode treats it as the user message and starts its
 own loop with its own tools.
+
+## How a review is published (the validator)
+
+`/review` does NOT let the model post the review with a raw `gh api
+.../reviews` call. The prompt tells it to write the review as JSON to a temp
+file and run `packages/action/script/post_review.ts` once. That script:
+
+- reads the JSON with `readFileCapped()` (bounded bytes — a garbled/hostile
+  blob can't OOM the runner),
+- drops every inline comment whose `path`+`line` isn't a real diff line (it
+  reconstructs the commentable line set from `pulls.listFiles` patches),
+- pins `commit_id` to the PR head SHA itself,
+- on a 422 degrades to a comments-free review, then to a plain issue comment.
+
+**Why this is not the old terminator tool.** GitHub's review endpoint is
+all-or-nothing: one inline comment off the diff 422s the whole call. With the
+model driving that call raw, a single bad line number → retry loop → the
+`timeout 20m opencode` kills the job (exit 124, ~20–30 min hung). `post_review.ts`
+is a one-shot **deterministic post-step** — no agent loop, no Zod terminator
+inside the model. The "don't reintroduce a Vercel AI SDK loop" rule below still
+holds; this is a publish helper the prompt points at, not an agent.
+
+## Input hardening (`packages/shared/src/sanitize.ts`)
+
+Everything attacker-influenceable (anyone who can comment on a PR) is capped +
+sanitized before we act on it or log it — ported from ask-bonk:
+
+- The free-form text after `/review` is run through `sanitizeUserPrompt()`
+  (strip control chars, cap bytes) and fenced as `<user_request>` data in the
+  prompt so it can't override the system prompt (prompt-injection guard).
+- All logged errors go through `safeErr()` (redact the App/OIDC token, strip
+  control chars, truncate). Never log a raw `err.message` that touched a token.
+- The review JSON the model emits is read with `readFileCapped()` and every
+  field is truncated to a `MAX_*` budget before posting.
 
 ## Conventions
 

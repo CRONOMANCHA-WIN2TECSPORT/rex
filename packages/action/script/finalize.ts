@@ -1,4 +1,5 @@
 import { Octokit } from "@octokit/rest";
+import { safeErr } from "@rex/shared";
 
 async function main() {
   const appToken = process.env.REX_APP_TOKEN;
@@ -39,10 +40,7 @@ async function main() {
     console.log(JSON.stringify({ event: "finalize_posted", outcome }));
   } catch (err) {
     console.error(
-      JSON.stringify({
-        event: "finalize_failed",
-        error: err instanceof Error ? err.message : String(err),
-      }),
+      JSON.stringify({ event: "finalize_failed", error: safeErr(err, [appToken]) }),
     );
   }
 }
