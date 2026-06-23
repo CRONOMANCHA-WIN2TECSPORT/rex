@@ -17,7 +17,7 @@ inputs:
   mentions:
     description: "Comma-separated trigger phrases."
     required: false
-    default: "/review,/fix"
+    default: "/review,/fix,/triage"
   permissions:
     description: "Required actor permission: admin | write | any | CODEOWNERS. Default per command."
     required: false
@@ -147,6 +147,7 @@ runs:
         ACTOR: ${{ github.event.comment.user.login || github.event.review.user.login || github.actor }}
         REPOSITORY: ${{ github.repository }}
         PR_NUMBER: ${{ github.event.issue.pull_request.url && github.event.issue.number || github.event.pull_request.number }}
+        ISSUE_NUMBER: ${{ github.event.issue.number }}
         IS_FORK: ${{ github.event.pull_request.head.repo.fork || (github.event.issue.pull_request && github.event.pull_request.head.repo.full_name != github.event.pull_request.base.repo.full_name) }}
         WORKSPACE_DIR: ${{ github.workspace }}
       run: pnpm exec tsx packages/action/script/orchestrate.ts
@@ -191,13 +192,15 @@ runs:
       shell: bash
       env:
         MODEL: ${{ inputs.model }}
-        AGENT: ${{ inputs.agent }}
+        # rex picks the agent per command (auto-reviewer / auto-implementer /
+        # auto-triage); inputs.agent is only a fallback if that mapping is absent.
+        AGENT: ${{ env.REX_AGENT || inputs.agent }}
         VARIANT: ${{ inputs.variant }}
         PROMPT: ${{ env.REX_PROMPT }}
         SHARE: false
         MENTIONS: ${{ inputs.mentions }}
         PR_NUMBER: ${{ env.REX_PR_NUMBER }}
-        ISSUE_NUMBER: ${{ env.REX_PR_NUMBER }}
+        ISSUE_NUMBER: ${{ env.REX_ISSUE_NUMBER || env.REX_PR_NUMBER }}
         INFERENCE_TIMEOUT_MS: ${{ inputs.inference_timeout_ms }}
         INFERENCE_CHUNK_TIMEOUT_MS: ${{ inputs.inference_chunk_timeout_ms }}
       run: |
@@ -234,6 +237,8 @@ runs:
         REX_APP_TOKEN: ${{ env.REX_APP_TOKEN }}
         REX_REPOSITORY: ${{ github.repository }}
         REX_PR_NUMBER: ${{ env.REX_PR_NUMBER }}
+        REX_TARGET_NUMBER: ${{ env.REX_TARGET_NUMBER }}
+        REX_COMMAND: ${{ env.REX_COMMAND }}
         OPENCODE_STATUS: ${{ steps.opencode.outcome }}
         GITHUB_RUN_ID: ${{ github.run_id }}
         GITHUB_SERVER_URL: ${{ github.server_url }}

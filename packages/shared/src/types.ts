@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const COMMANDS = ["review", "fix"] as const;
+export const COMMANDS = ["review", "fix", "triage"] as const;
 export type Command = (typeof COMMANDS)[number];
 
 export const AllowlistSchema = z.object({

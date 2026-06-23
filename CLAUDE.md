@@ -5,10 +5,17 @@ Context for AI assistants working on rex. Read this before making changes.
 ## What rex is
 
 Self-hosted PR review agent modelled after [ask-bonk](https://github.com/ask-bonk/ask-bonk)
-but with the VPS server replacing Cloudflare Workers. Two commands:
+but with the VPS server replacing Cloudflare Workers. Three commands:
 
 - `/review` — leaves a polished PR review with inline comments + GitHub-suggestion blocks.
 - `/fix` — applies fixes by writing files, committing, and pushing to the PR branch.
+- `/triage` — investigates a bug-report **issue** (code-only, no execution), posts a
+  root-cause report, and stamps one `triage/*` label. Read-only; never pushes.
+
+rex picks the OpenCode agent per command — `/review`→`auto-reviewer`,
+`/fix`→`auto-implementer`, `/triage`→`auto-triage` (exported as `REX_AGENT` from
+`orchestrate.ts`; the workflow's `agent:` input is only a fallback). The target
+repo supplies those agents under `.opencode/agents/`.
 
 Like ask-bonk, the agent itself is **[OpenCode](https://opencode.ai)** —
 installed globally inside the Action, invoked as `opencode github run`.
@@ -77,7 +84,7 @@ the model's GitHub posting is no longer schema-validated. The prompts in
 packages/
 ├── shared/   Zod schemas (commands, config), prompts (REVIEW/FIX system prompts), GitHub helpers, sanitize.ts (input-hardening)
 ├── server/   Hono app + config loader + allowlist + OIDC validation
-└── action/   action.yml + orchestrate.ts (preflight) + post_review.ts (review publisher) + finalize.ts
+└── action/   action.yml + orchestrate.ts (preflight) + post_review.ts (review publisher) + post_triage.ts (triage publisher) + finalize.ts
 ```
 
 Each package is a pnpm workspace member with its own `package.json`. They all
@@ -162,6 +169,25 @@ model driving that call raw, a single bad line number → retry loop → the
 is a one-shot **deterministic post-step** — no agent loop, no Zod terminator
 inside the model. The "don't reintroduce a Vercel AI SDK loop" rule below still
 holds; this is a publish helper the prompt points at, not an agent.
+
+## How triage is published (the other validator)
+
+`/triage` is issues-only and read-only. `orchestrate.ts` resolves the target from
+`ISSUE_NUMBER` (not `PR_NUMBER`), rejects a `/triage` typed on a PR (`issues.get`
+returns `pull_request` for PRs), and scopes the token to `NO_PUSH`
+(`contents: read`, `issues: write`). The model investigates by reading code only —
+no execution, no MCP — then writes a verdict JSON and runs `post_triage.ts` once,
+exactly like `/review` uses `post_review.ts`. That script posts the report comment
+and applies **one** `triage/*` label via `applyTriageLabel()`
+(`packages/shared/src/triage.ts`), creating the label if missing and stripping the
+other three so the issue lands in a single clean state.
+
+The four states are mutually exclusive: `triage/verified` (bug reproduced **and** a
+simple fix is included), `triage/reproduced` (bug confirmed, fix needs work),
+`triage/skipped` (model declined / inconclusive) — all three decided by the model —
+and `triage/failed`, which **only** `finalize.ts` sets when OpenCode crashed or hit
+the retry cap (the model can't report its own crash). `finalize.ts` keys off
+`REX_COMMAND` + `REX_TARGET_NUMBER`, so the failure path labels the issue too.
 
 ## Input hardening (`packages/shared/src/sanitize.ts`)
 

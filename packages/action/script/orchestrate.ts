@@ -6,6 +6,7 @@ import {
   type Command,
   REVIEW_SYSTEM_PROMPT,
   FIX_SYSTEM_PROMPT,
+  TRIAGE_SYSTEM_PROMPT,
   sanitizeUserPrompt,
   safeErr,
 } from "@rex/shared";
@@ -25,6 +26,7 @@ interface Env {
   ACTOR: string;
   REPOSITORY: string;
   PR_NUMBER?: string;
+  ISSUE_NUMBER?: string;
   IS_FORK?: string;
 }
 
@@ -71,7 +73,23 @@ function defaultsFor(command: Command): {
   tokenPermissions: "NO_PUSH" | "WRITE";
 } {
   if (command === "fix") return { permission: "admin", tokenPermissions: "WRITE" };
+  // triage reads code and writes the issue (comment + labels) but never pushes,
+  // so NO_PUSH (contents:read, issues:write) is exactly the scope it needs.
   return { permission: "write", tokenPermissions: "NO_PUSH" };
+}
+
+// rex picks the OpenCode agent per command instead of the workflow pinning a
+// single static `agent:` input (which made /fix run under the read-only
+// auto-reviewer). The repo supplies these agents under .opencode/agents/.
+function agentFor(command: Command): string {
+  switch (command) {
+    case "fix":
+      return "auto-implementer";
+    case "triage":
+      return "auto-triage";
+    default:
+      return "auto-reviewer";
+  }
 }
 
 async function checkPermission(
@@ -163,17 +181,26 @@ function skip(reason: string): void {
 }
 
 function systemPromptFor(command: Command): string {
-  return command === "fix" ? FIX_SYSTEM_PROMPT : REVIEW_SYSTEM_PROMPT;
+  switch (command) {
+    case "fix":
+      return FIX_SYSTEM_PROMPT;
+    case "triage":
+      return TRIAGE_SYSTEM_PROMPT;
+    default:
+      return REVIEW_SYSTEM_PROMPT;
+  }
 }
 
-function buildPrompt(command: Command, repo: string, prNumber: string, userPrompt: string): string {
-  // The PR context guard pins OpenCode to the correct PR even if git state or
+function buildPrompt(command: Command, repo: string, targetNumber: string, userPrompt: string): string {
+  // The context guard pins OpenCode to the correct PR/issue even if git state or
   // tool calls are ambiguous. Pattern from ask-bonk: see
   // ask-bonk/github/script/orchestrate.ts:455-462.
   const parts: string[] = [systemPromptFor(command)];
-  if (prNumber) {
+  if (targetNumber) {
     parts.push(
-      `You are working on PR #${prNumber} in ${repo}. When posting reviews or comments, always target PR #${prNumber}.`,
+      command === "triage"
+        ? `You are triaging issue #${targetNumber} in ${repo}. Investigate by reading code only — do not edit, commit, or push. When publishing, always target issue #${targetNumber}.`
+        : `You are working on PR #${targetNumber} in ${repo}. When posting reviews or comments, always target PR #${targetNumber}.`,
     );
   }
   // The free-form text comes from whoever commented `/review` — untrusted. Fence
@@ -207,6 +234,7 @@ async function main() {
   if (!parsed) skip("no rex command in comment");
 
   const { command, prompt: userPrompt } = parsed!;
+  const isTriage = command === "triage";
 
   if (e.FORKS === "true" && e.IS_FORK === "true") {
     skip("fork PRs disabled by `forks: true`");
@@ -229,15 +257,35 @@ async function main() {
   const perm = await checkPermission(octokit, owner, repo, e.ACTOR, requiredPerm);
   if (!perm.ok) skip(perm.reason ?? "permission denied");
 
-  if (e.PR_NUMBER) {
-    // Verify the PR exists and is reachable with the workflow token before we
-    // burn an OIDC exchange. Avoids confusing failures later if the actor
-    // commented on something we can't read.
+  // triage operates on an issue; review/fix operate on a PR. Resolve the single
+  // target number the rest of the pipeline (OpenCode + post-steps) acts on.
+  const targetNumber = isTriage ? (e.ISSUE_NUMBER ?? "") : (e.PR_NUMBER ?? "");
+  if (!targetNumber) skip(`missing ${isTriage ? "issue" : "PR"} number`);
+
+  // Verify the target exists and is reachable with the workflow token before we
+  // burn an OIDC exchange. Avoids confusing failures later if the actor
+  // commented on something we can't read.
+  if (isTriage) {
     try {
-      await octokit.pulls.get({ owner, repo, pull_number: Number(e.PR_NUMBER) });
+      const { data } = await octokit.issues.get({
+        owner,
+        repo,
+        issue_number: Number(targetNumber),
+      });
+      // GitHub models PRs as issues; `pull_request` is only present on PRs.
+      // triage is issues-only — a /triage on a PR is a no-op, not a failure.
+      if (data.pull_request) skip("triage is issues-only (comment is on a PR)");
     } catch (err) {
       skip(
-        `failed to fetch PR ${e.PR_NUMBER}: ${safeErr(err, [process.env.ACTION_TOKEN, process.env.REX_APP_TOKEN])}`,
+        `failed to fetch issue ${targetNumber}: ${safeErr(err, [process.env.ACTION_TOKEN, process.env.REX_APP_TOKEN])}`,
+      );
+    }
+  } else {
+    try {
+      await octokit.pulls.get({ owner, repo, pull_number: Number(targetNumber) });
+    } catch (err) {
+      skip(
+        `failed to fetch PR ${targetNumber}: ${safeErr(err, [process.env.ACTION_TOKEN, process.env.REX_APP_TOKEN])}`,
       );
     }
   }
@@ -261,16 +309,17 @@ async function main() {
 
   maskValue(appToken);
 
-  const fullPrompt = buildPrompt(
-    command,
-    e.REPOSITORY,
-    e.PR_NUMBER ?? "",
-    sanitizeUserPrompt(userPrompt),
-  );
+  const fullPrompt = buildPrompt(command, e.REPOSITORY, targetNumber, sanitizeUserPrompt(userPrompt));
 
   setOutput("skip", "false");
   setEnv("REX_APP_TOKEN", appToken);
-  setEnv("REX_PR_NUMBER", e.PR_NUMBER ?? "");
+  setEnv("REX_COMMAND", command);
+  setEnv("REX_TARGET_NUMBER", targetNumber);
+  // OpenCode + post_review.ts read PR_NUMBER; OpenCode + post_triage.ts read
+  // ISSUE_NUMBER. Only the relevant one is populated per command.
+  setEnv("REX_PR_NUMBER", isTriage ? "" : targetNumber);
+  setEnv("REX_ISSUE_NUMBER", isTriage ? targetNumber : "");
+  setEnv("REX_AGENT", agentFor(command));
   setEnv("REX_PROMPT", fullPrompt);
 
   console.log(
@@ -279,7 +328,8 @@ async function main() {
       command,
       actor: e.ACTOR,
       repo: e.REPOSITORY,
-      pr: e.PR_NUMBER,
+      target: targetNumber,
+      agent: agentFor(command),
       token_permissions: tokenPerm,
       prompt_chars: fullPrompt.length,
     }),
