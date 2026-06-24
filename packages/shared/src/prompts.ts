@@ -146,13 +146,6 @@ leave a short summary comment.
    prior step, so the push will trigger downstream workflows. Do NOT push to
    a fork — if \`gh pr view --json isCrossRepository\` returns true, abort
    and leave a comment instead.
-6. Post one summary comment on the PR describing what you changed. To avoid bash quoting issues, always use a temporary file:
-   \`\`\`bash
-   cat > /tmp/comment.txt << 'EOF'
-   Your summary comment here...
-   EOF
-   gh pr comment "$PR_NUMBER" --body-file /tmp/comment.txt
-   \`\`\`
 
 **MANDATORY RULE:** Any command used to publish or write to GitHub using the API (e.g., \`gh api\` POST) MUST include the \`--silent\` flag. This prevents massive JSON responses from hanging the session. You must also STOP and exit immediately after.
 
@@ -166,7 +159,7 @@ leave a short summary comment.
 - If you can't push (fork PR, branch protection, etc.), post the proposed
   diff as a comment and stop. Don't error out silently.
 
-**IMPORTANT:** Once you have posted the summary comment via \`gh pr comment\`, your task is complete. You must STOP and exit immediately. Do not execute any further actions or commands.
+**IMPORTANT:** Once you have pushed the changes (or decided not to push), formulate a clear final response to the user summarizing what you did or proposed, then stop. Do not make any manual \`gh pr comment\` calls; OpenCode will automatically publish your final response as a comment on the PR. You must STOP and exit immediately. Do not execute any further actions or commands.
 `;
 
 export const TRIAGE_SYSTEM_PROMPT = `You are rex in triage mode, running inside a GitHub Action with read-only access to the repository.
@@ -282,13 +275,6 @@ one short comment on the issue linking the PR.
    EOF
    gh pr create --title "[rex] fix #$ISSUE_NUMBER: <short summary>" --body-file /tmp/pr-body.txt --head "rex/fix-issue-$ISSUE_NUMBER" || true
    \`\`\`
-7. Post one short comment on the ISSUE linking the PR:
-   \`\`\`bash
-   cat > /tmp/issue-comment.txt << 'EOF'
-   Opened a PR with the fix: <PR URL>
-   EOF
-   gh issue comment "$ISSUE_NUMBER" --body-file /tmp/issue-comment.txt
-   \`\`\`
 
 **MANDATORY RULE:** Any command used to publish or write to GitHub using the API (e.g., \`gh api\` POST) MUST include the \`--silent\` flag. This prevents massive JSON responses from hanging the session. You must also STOP and exit immediately after.
 
@@ -301,5 +287,5 @@ one short comment on the issue linking the PR.
 - Don't fix things the issue didn't ask for. Scope creep is worse than a smaller diff.
 - Never force-push over an unrelated branch; only touch \`rex/fix-issue-$ISSUE_NUMBER\`.
 
-**IMPORTANT:** Once you have opened the PR and commented on the issue, your task is complete. You must STOP and exit immediately. Do not execute any further actions or commands.
+**IMPORTANT:** Once you have opened the PR (or decided not to build one), formulate a clear final response to the user summarizing what you did or proposed, including a link to the created PR. Do not make any manual \`gh issue comment\` calls; OpenCode will automatically publish your final response as a comment on the issue. You must STOP and exit immediately. Do not execute any further actions or commands.
 `;

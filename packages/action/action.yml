@@ -65,6 +65,14 @@ inputs:
     description: "Abort a stream that stops emitting chunks for this many ms (ms). Maps to OpenCode provider.<provider>.options.chunkTimeout. This is what stops an intermittent mid-stream provider stall from hanging the whole job until the outer timeout."
     required: false
     default: "90000"
+  git_user_name:
+    description: "Git user name for commits."
+    required: false
+    default: "rex-w2t[bot]"
+  git_user_email:
+    description: "Git user email for commits."
+    required: false
+    default: "rex-w2t[bot]@users.noreply.github.com"
 
 runs:
   using: "composite"
@@ -175,8 +183,8 @@ runs:
       env:
         GH_TOKEN: ${{ env.REX_APP_TOKEN }}
       run: |
-        git config --global user.name "rex[bot]"
-        git config --global user.email "rex[bot]@users.noreply.github.com"
+        git config --global user.name "${{ inputs.git_user_name }}"
+        git config --global user.email "${{ inputs.git_user_email }}"
         if [ -n "${GH_TOKEN}" ]; then
           server="${GITHUB_SERVER_URL:-https://github.com}"
           host="${server#https://}"
