@@ -8,7 +8,9 @@ Self-hosted PR review agent modelled after [ask-bonk](https://github.com/ask-bon
 but with the VPS server replacing Cloudflare Workers. Three commands:
 
 - `/review` — leaves a polished PR review with inline comments + GitHub-suggestion blocks.
-- `/fix` — applies fixes by writing files, committing, and pushing to the PR branch.
+- `/fix` — applies fixes by writing files, committing, and pushing. On a **PR**
+  it pushes to the PR branch; on an **issue** it creates a `rex/fix-issue-<n>`
+  branch, pushes it, and opens a PR that closes the issue.
 - `/triage` — investigates a bug-report **issue** (code-only, no execution), posts a
   root-cause report, and stamps one `triage/*` label. Read-only; never pushes.
 
