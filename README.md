@@ -6,7 +6,8 @@ deployment of [pr-agent](https://github.com/Codium-ai/pr-agent), TypeScript ever
 ## What it does
 
 - `/review` — leaves a polished PR review (summary + inline comments + commit-ready suggestions).
-- `/fix` — applies the fixes for you (commits + push to the PR branch).
+- `/fix` — applies fixes. On a **PR** it commits and pushes to the PR branch. On an **issue** it creates a new branch, implements the fix, and opens a PR that closes the issue.
+- `/triage` — investigates a bug report on an **issue** by static analysis (read-only). Posts a verdict (`verified` / `reproduced` / `skipped`) with root-cause analysis and applies a `triage/*` label.
 
 ## Architecture
 
@@ -53,7 +54,7 @@ pnpm dev:server
 3. Drop `rex.config.yml` on the VPS with your allowlist.
 4. In any repo you want rex on, install the App and add `.github/workflows/rex.yml` (see `packages/action/README.md`).
 5. Add API key secrets (`ANTHROPIC_API_KEY`, etc.).
-6. Comment `/review` on a PR.
+6. Comment `/review` on a PR, `/fix` on a PR or issue, or `/triage` on an issue.
 
 ## License
 
