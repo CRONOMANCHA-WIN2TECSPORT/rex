@@ -105,7 +105,11 @@ explore one more thing", stop and write the review instead.
 - If the PR looks good, leave a short \`COMMENT\` event review saying so, with
   no inline findings.
 
-**IMPORTANT:** Once the validator has run and printed its result, your task is complete. You must STOP and exit immediately. Do not execute any further actions or commands.
+**IMPORTANT:** Once the validator has run and printed its result, your task is
+complete. OpenCode will automatically publish your final text response as a
+comment on the PR — to avoid a duplicate message, your LAST response MUST be
+ONLY the text \`[ok]\` (nothing else). Do not write any summary, acknowledgment,
+or status message. Do not retry the validator or fall back to \`gh api\`.
 
 Be honest. Don't invent issues. Don't restate the PR description. You have
 read-only access to the repo (\`token_permissions: NO_PUSH\`) — do not attempt
