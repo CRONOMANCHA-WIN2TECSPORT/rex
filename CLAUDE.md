@@ -172,6 +172,14 @@ is a one-shot **deterministic post-step** — no agent loop, no Zod terminator
 inside the model. The "don't reintroduce a Vercel AI SDK loop" rule below still
 holds; this is a publish helper the prompt points at, not an agent.
 
+After publishing, `post_review.ts` also applies a mutually-exclusive **review
+label** to the PR: `rex/approved` (APPROVE or COMMENT with no findings) or
+`rex/needs-review` (REQUEST_CHANGES or COMMENT with inline findings). The
+label applier in `packages/shared/src/review-labels.ts` mirrors the triage
+label pattern — it creates the label if it doesn't exist, strips the opposite
+label, and applies the target. Label failures are best-effort (logged, never
+fail the review).
+
 ## How triage is published (the other validator)
 
 `/triage` is issues-only and read-only. `orchestrate.ts` resolves the target from

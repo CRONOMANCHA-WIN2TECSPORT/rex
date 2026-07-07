@@ -26,6 +26,7 @@ import {
   truncateChars,
   stripControlChars,
   safeErr,
+  applyReviewLabel,
   MAX_REVIEW_FILE_BYTES,
   MAX_REVIEW_BODY_CHARS,
   MAX_COMMENT_BODY_CHARS,
@@ -34,6 +35,14 @@ import {
 
 const REVIEW_EVENTS = new Set(["COMMENT", "REQUEST_CHANGES", "APPROVE"]);
 const DEFAULT_REVIEW_FILE = "/tmp/rex-review.json";
+
+// Map the review event + findings count to a label status.
+// APPROVE or COMMENT-with-no-findings → approved; everything else → needs-review.
+function reviewLabelStatus(event: string, inlineCount: number): "approved" | "needs-review" {
+  if (event === "APPROVE") return "approved";
+  if (event === "COMMENT" && inlineCount === 0) return "approved";
+  return "needs-review";
+}
 
 function log(event: string, extra: Record<string, unknown> = {}): void {
   console.log(JSON.stringify({ event, ...extra }));
@@ -216,6 +225,7 @@ async function run(): Promise<void> {
       comments: kept,
     });
     log("post_review_ok", { review_id: res.data.id, posted_comments: kept.length, dropped });
+    await labelBestEffort(octokit, owner, repo, pull_number, event, kept.length);
     return;
   } catch (err) {
     const status = (err as { status?: number }).status;
@@ -248,6 +258,7 @@ async function run(): Promise<void> {
       comments: [],
     });
     log("post_review_fallback_ok", { review_id: res.data.id });
+    await labelBestEffort(octokit, owner, repo, pull_number, event, kept.length);
     return;
   } catch (err) {
     log("post_review_fallback_failed", { error: safeErr(err, secretsForLog()) });
@@ -256,6 +267,24 @@ async function run(): Promise<void> {
   // Fallback B: a plain issue comment never 422s on line anchoring.
   await octokit.issues.createComment({ owner, repo, issue_number: pull_number, body: fallbackBody });
   log("post_review_fallback_comment_ok", {});
+  await labelBestEffort(octokit, owner, repo, pull_number, event, kept.length);
+}
+
+async function labelBestEffort(
+  octokit: Octokit,
+  owner: string,
+  repo: string,
+  pull_number: number,
+  event: string,
+  inlineCount: number,
+): Promise<void> {
+  try {
+    const status = reviewLabelStatus(event, inlineCount);
+    await applyReviewLabel(octokit, owner, repo, pull_number, status);
+    log("review_label_ok", { label: status });
+  } catch (err) {
+    log("review_label_failed", { error: safeErr(err, secretsForLog()) });
+  }
 }
 
 main();
