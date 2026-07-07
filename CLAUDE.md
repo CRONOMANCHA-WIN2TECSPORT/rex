@@ -180,6 +180,17 @@ label pattern — it creates the label if it doesn't exist, strips the opposite
 label, and applies the target. Label failures are best-effort (logged, never
 fail the review).
 
+**The OpenCode auto-comment**: `opencode github run` unconditionally posts the
+model's final text response as an issue comment (no flag to suppress it — see
+`createComment()` in opencode's `github.handler.ts`). For `/review` and
+`/triage` that comment is always a duplicate of what the validator already
+published, so `finalize.ts` deletes it on success, finding it by the per-run
+footer link OpenCode appends (`[github run](/owner/repo/actions/runs/<run_id>)`).
+The prompts still mandate a bare `[ok]` final response so the notification
+email that fires before deletion carries no noise. On failure the comment is
+kept (it carries the error message rex's generic failure comment lacks).
+`/fix` keeps it too — there it IS the summary comment.
+
 ## How triage is published (the other validator)
 
 `/triage` is issues-only and read-only. `orchestrate.ts` resolves the target from

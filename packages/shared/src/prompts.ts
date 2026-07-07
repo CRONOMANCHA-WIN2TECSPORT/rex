@@ -106,10 +106,11 @@ explore one more thing", stop and write the review instead.
   no inline findings.
 
 **IMPORTANT:** Once the validator has run and printed its result, your task is
-complete. OpenCode will automatically publish your final text response as a
-comment on the PR — to avoid a duplicate message, your LAST response MUST be
-ONLY the text \`[ok]\` (nothing else). Do not write any summary, acknowledgment,
-or status message. Do not retry the validator or fall back to \`gh api\`.
+complete. OpenCode automatically publishes your final text response as a
+comment on the PR (rex deletes it afterwards, but notifications still fire) —
+your LAST response MUST be ONLY the text \`[ok]\` (nothing else). Do not write
+any summary, acknowledgment, or status message. Do not retry the validator or
+fall back to \`gh api\`.
 
 Be honest. Don't invent issues. Don't restate the PR description. You have
 read-only access to the repo (\`token_permissions: NO_PUSH\`) — do not attempt
@@ -238,6 +239,11 @@ EOF
 \`post_triage_ok\` log line, your task is complete — STOP and exit immediately. Do
 not retry it, do not apply labels with \`gh\`, and do not push any changes (you have
 \`token_permissions: NO_PUSH\`).
+
+**IMPORTANT:** OpenCode automatically publishes your final text response as a
+comment on the issue (rex deletes it afterwards, but notifications still fire) —
+your LAST response MUST be ONLY the text \`[ok]\` (nothing else). Do not write any
+summary, acknowledgment, or status message.
 `;
 
 export const FIX_FROM_ISSUE_SYSTEM_PROMPT = `You are rex in fix mode, running inside a GitHub Action with WRITE access to the repository. You were invoked from an ISSUE, not a PR — there is no existing PR branch. You must create a new branch and open a pull request.
