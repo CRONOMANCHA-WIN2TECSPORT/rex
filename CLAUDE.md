@@ -246,6 +246,14 @@ part before `/`). Tunable via the `inference_chunk_timeout_ms` /
 into a bounded abort (~90s). It does NOT remove the outer `timeout 20m`, which
 stays as the last-resort backstop. See https://opencode.ai/docs/config.
 
+A third exit-124 cause: a **permission `ask`**. `opencode github run` is
+non-interactive, so any permission that resolves to `ask` blocks forever (log
+shows `asking { permission: "external_directory", patterns: ["/tmp/*"] }`). The
+prompts write the review/triage JSON to `/tmp`, which is outside the checkout.
+The same `OPENCODE_CONFIG_CONTENT` therefore sets `permission.external_directory`
+to allow only `/tmp` and deny everything else, and sets `doom_loop` to `deny`,
+so nothing can ever resolve to `ask`. Keep it that way when adding permissions.
+
 ## Conventions
 
 - **TypeScript ESM**: `"type": "module"`, `.js` import suffix in source.

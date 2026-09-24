@@ -227,10 +227,20 @@ runs:
         # starts. We inject them for the current provider (the part of MODEL before
         # `/`) via OPENCODE_CONFIG_CONTENT, which has higher precedence than repo
         # config so it always applies. See https://opencode.ai/docs/config.
+        #
+        # No permission may resolve to "ask": `opencode github run` has nobody to
+        # answer, so an ask blocks until the outer timeout (exit 124). The prompts
+        # write the review/triage JSON to /tmp, which is outside the checkout and
+        # hits `external_directory` (default "ask" in recent OpenCode). Allow /tmp
+        # only, deny everything else so any other ask fails fast instead of hanging.
+        # Last matching rule wins, so "*" must come first.
+        PERMISSION_JSON='{"external_directory":{"*":"deny","/tmp":"allow","/tmp/*":"allow","/tmp/**":"allow"},"doom_loop":"deny"}'
         PROVIDER="${MODEL%%/*}"
         if [ -n "$PROVIDER" ] && [ "$PROVIDER" != "$MODEL" ]; then
-          export OPENCODE_CONFIG_CONTENT="{\"provider\":{\"${PROVIDER}\":{\"options\":{\"timeout\":${INFERENCE_TIMEOUT_MS},\"chunkTimeout\":${INFERENCE_CHUNK_TIMEOUT_MS}}}}}"
+          export OPENCODE_CONFIG_CONTENT="{\"permission\":${PERMISSION_JSON},\"provider\":{\"${PROVIDER}\":{\"options\":{\"timeout\":${INFERENCE_TIMEOUT_MS},\"chunkTimeout\":${INFERENCE_CHUNK_TIMEOUT_MS}}}}}"
           echo "{\"event\":\"opencode_inference_timeouts\",\"provider\":\"${PROVIDER}\",\"timeout_ms\":${INFERENCE_TIMEOUT_MS},\"chunk_timeout_ms\":${INFERENCE_CHUNK_TIMEOUT_MS}}"
+        else
+          export OPENCODE_CONFIG_CONTENT="{\"permission\":${PERMISSION_JSON}}"
         fi
         timeout 20m opencode github run
         EXIT_CODE=$?
